@@ -1,7 +1,7 @@
 import React, { FC, ReactElement, useCallback, useContext, useState } from 'react';
 import { message } from 'antd';
 import styled from 'styled-components';
-import { ApiContext, BlocksContext, BusContext, ErrorCode, EuropaManageContext, LogsContext, Setting, SettingContext } from '../../core';
+import { ApiContext, BlocksContext, BusContext, DEFAULT_WS_PORT, ErrorCode, EuropaManageContext, LogsContext, Setting, SettingContext } from '../../core';
 import { useHistory } from 'react-router-dom';
 import EuropaSetting from './EuropaSetting';
 import { take, filter } from 'rxjs/operators';
@@ -29,9 +29,9 @@ function createNewSetting(setting: Setting, database: string, workspace: string,
 }
 
 const SettingPage: FC<{ className: string }> = ({ className }): ReactElement => {
-  const { update, setting } = useContext(SettingContext);
+  const { update, setting, defaultDataBasePath } = useContext(SettingContext);
   const { clear: clearBlocks } = useContext(BlocksContext);
-  const { start: connectApi } = useContext(ApiContext);
+  const { connect: connectApi, disconnect } = useContext(ApiContext);
   const { clear: clearLogs } = useContext(LogsContext);
   const { change } = useContext(EuropaManageContext);
   const [ loading, setLoading ] = useState<boolean>(false);
@@ -39,6 +39,10 @@ const SettingPage: FC<{ className: string }> = ({ className }): ReactElement => 
   const { connected$ } = useContext(BusContext);
 
   const onChange = useCallback(async (database: string, workspace: string, httpPort: number | undefined, wsPort: number | undefined) => {
+    if (!setting) {
+      return;
+    }
+
     setLoading(true);
     clearLogs();
     clearBlocks();
@@ -56,11 +60,15 @@ const SettingPage: FC<{ className: string }> = ({ className }): ReactElement => 
       const europa = await change(database, workspace, { httpPort, wsPort });
 
       // Wrong setting may cause Europa exit
+      europa.once('exit', (e) => {console.log('europa exit', e)})
+      europa.once('disconnect', (e: any) => {console.log('europa disconnect', e)})
+      europa.once('error', (e) => {console.log('europa error', e)})
       europa.once('close', (code, signal) => {
         console.log('code', code, signal, typeof code);
-  
+        
         if (!!code) {
           setLoading(false);
+          disconnect();
           message.error(`Europa exited unexpectly, code: ${ErrorCode.RunClashed}`, 3);
         }
       });
@@ -72,7 +80,7 @@ const SettingPage: FC<{ className: string }> = ({ className }): ReactElement => 
       return;
     }
 
-    connectApi(wsPort || 9944);
+    connectApi(wsPort || DEFAULT_WS_PORT);
 
     connected$.pipe(
       filter(c => !!c),
@@ -83,13 +91,25 @@ const SettingPage: FC<{ className: string }> = ({ className }): ReactElement => 
       setLoading(false);
       history.push('/explorer');
     });
-  }, [setting, update, history, change, clearLogs, clearBlocks, connected$, connectApi]);
+  }, [setting, update, history, change, clearLogs, clearBlocks, connected$, connectApi, disconnect]);
 
   return (
     <div className={className}>
       <div className="content">
         <div className="setting">
-          <EuropaSetting type="Change" onSubmit={onChange} loading={loading} />
+          {
+            setting &&
+              <EuropaSetting initialSetting={{
+                database: setting.lastChoosed?.database || defaultDataBasePath,
+                workspace: setting.lastChoosed?.workspace || 'default',
+                httpPort: setting.lastChoosed?.httpPort,
+                wsPort: setting.lastChoosed?.wsPort,
+              }}
+              type="Change"
+              onSubmit={onChange}
+              loading={loading}
+            />
+          }
         </div>
       </div>
     </div>
